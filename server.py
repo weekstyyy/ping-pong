@@ -7,112 +7,143 @@ import random
 WIDTH, HEIGHT = 800, 600
 BALL_SPEED = 5
 PADDLE_SPEED = 10
-paddles = {0: 250, 1: 250}
-scores = [0, 0]
-ball = {"x": WIDTH//2, "y": HEIGHT//2, "vx": BALL_SPEED, "vy": BALL_SPEED}
-clients = []
-COUNTDOWN_START = 3  # секунди
-countdown = COUNTDOWN_START
-start_time = time.time()
-def countdown_timer():
-    global countdown, start_time
-    while countdown > 0:
-        time.sleep(1)
-        countdown -= 1
-    start_time = time.time()  # Початок гри після відліку
+COUNTDOWN_START = 3
 
-def handle_client(conn, pid):
-    global paddles
-    while True:
+class GameServer:
+    def __init__(self, host='localhost', port=8080):
+        self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server.bind((host, port))
+        self.server.listen(2)
+        print("🎮 Server started")
+
+        self.clients = {0: None, 1: None}
+        self.connected = {0: False, 1: False}
+        self.lock = threading.Lock()
+        self.reset_game_state()
+        self.sound_event = None
+
+    def reset_game_state(self):
+        self.paddles = {0: 250, 1: 250}
+        self.scores = [0, 0]
+        self.ball = {
+            "x": WIDTH // 2,
+            "y": HEIGHT // 2,
+            "vx": BALL_SPEED * random.choice([-1, 1]),
+            "vy": BALL_SPEED * random.choice([-1, 1])
+        }
+        self.countdown = COUNTDOWN_START
+        self.game_over = False
+        self.winner = None
+
+    def handle_client(self, pid):
+        conn = self.clients[pid]
         try:
-            data = conn.recv(64).decode()
-            if data == "UP":
-                paddles[pid] -= PADDLE_SPEED
-            elif data == "DOWN":
-                paddles[pid] += PADDLE_SPEED
+            while True:
+                data = conn.recv(64).decode()
+                with self.lock:
+                    if data == "UP":
+                        self.paddles[pid] = max(60, self.paddles[pid] - PADDLE_SPEED)
+                    elif data == "DOWN":
+                        self.paddles[pid] = min(HEIGHT - 100, self.paddles[pid] + PADDLE_SPEED)
         except:
-            break
+            with self.lock:
+                self.connected[pid] = False
+                self.game_over = True
+                self.winner = 1 - pid  # інший гравець автоматично виграє
+                print(f"Гравець {pid} відключився. Переміг гравець {1 - pid}.")
 
-def ball_logic():
-    global ball, scores, game_over, winner
-
-    # Очікуємо завершення відліку
-    while countdown > 0:
-        time.sleep(0.016)
-        data = json.dumps({
-            "paddles": paddles,
-            "ball": ball,
-            "scores": scores,
-            "countdown": countdown
+    def broadcast_state(self):
+        state = json.dumps({
+            "paddles": self.paddles,
+            "ball": self.ball,
+            "scores": self.scores,
+            "countdown": max(self.countdown, 0),
+            "winner": self.winner if self.game_over else None,
+            "sound_event": self.sound_event
         }) + "\n"
-        for c in clients:
-            try:
-                c.send(data.encode())
-            except:
-                continue
+        for pid, conn in self.clients.items():
+            if conn:
+                try:
+                    conn.sendall(state.encode())
+                except:
+                    self.connected[pid] = False
 
-    # Основна гра
-    while not game_over:
-        ball["x"] += ball["vx"]
-        ball["y"] += ball["vy"]
+    def ball_logic(self):
+        while self.countdown > 0:
+            time.sleep(1)
+            with self.lock:
+                self.countdown -= 1
+                self.broadcast_state()
 
-        if ball["y"] <= 0 or ball["y"] >= HEIGHT:
-            ball["vy"] *= -1
+        while not self.game_over:
+            with self.lock:
+                self.ball['x'] += self.ball['vx']
+                self.ball['y'] += self.ball['vy']
 
-        if (ball["x"] <= 40 and paddles[0] <= ball["y"] <= paddles[0] + 100) or \
-           (ball["x"] >= WIDTH - 40 and paddles[1] <= ball["y"] <= paddles[1] + 100):
-            ball["vx"] *= -1
+                if self.ball['y'] <= 60 or self.ball['y'] >= HEIGHT:
+                    self.ball['vy'] *= -1
+                    self.sound_event = "wall_hit"
 
-        if ball["x"] < 0:
-            scores[1] += 1
-            reset_ball()
-        elif ball["x"] > WIDTH:
-            scores[0] += 1
-            reset_ball()
+                if (self.ball['x'] <= 40 and self.paddles[0] <= self.ball['y'] <= self.paddles[0] + 100) or \
+                   (self.ball['x'] >= WIDTH - 40 and self.paddles[1] <= self.ball['y'] <= self.paddles[1] + 100):
+                    self.ball['vx'] *= -1
+                    self.sound_event = 'platform_hit'
 
-        # Перемога при 10 очках
-        if scores[0] >= 10:
-            game_over = True
-            winner = 0
-        elif scores[1] >= 10:
-            game_over = True
-            winner = 1
+                if self.ball['x'] < 0:
+                    self.scores[1] += 1
+                    self.reset_ball()
+                elif self.ball['x'] > WIDTH:
+                    self.scores[0] += 1
+                    self.reset_ball()
 
-        data = json.dumps({
-            "paddles": paddles,
-            "ball": ball,
-            "scores": scores,
-            "countdown": 0,
-            "winner": winner if game_over else None
-        }) + "\n"
-        for c in clients:
-            try:
-                c.send(data.encode())
-            except:
-                continue
-        time.sleep(0.016)
+                if self.scores[0] >= 10:
+                    self.game_over = True
+                    self.winner = 0
+                elif self.scores[1] >= 10:
+                    self.game_over = True
+                    self.winner = 1
 
+                self.broadcast_state()
+                self.sound_event = None
+            time.sleep(0.016)
 
-def reset_ball():
-    ball["x"], ball["y"] = WIDTH//2, HEIGHT//2
-    ball["vx"] = BALL_SPEED * random.choice([-1, 1])
-    ball["vy"] = BALL_SPEED * random.choice([-1, 1])
+    def reset_ball(self):
+        self.ball = {
+            "x": WIDTH // 2,
+            "y": HEIGHT // 2,
+            "vx": BALL_SPEED * random.choice([-1, 1]),
+            "vy": BALL_SPEED * random.choice([-1, 1])
+        }
 
-server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.bind(("localhost", 8081))
-server.listen(2)
+    def accept_players(self):
+        for pid in [0, 1]:
+            print(f"Очікуємо гравця {pid}...")
+            conn, _ = self.server.accept()
+            self.clients[pid] = conn
+            conn.sendall((str(pid) + "\n").encode())
+            self.connected[pid] = True
+            print(f"Гравець {pid} приєднався")
+            threading.Thread(target=self.handle_client, args=(pid,), daemon=True).start()
 
-print("🎮 Server started")
-for pid in range(2):
-    conn, _ = server.accept()
-    print(f"Player {pid} connected")
-    clients.append(conn)
-    threading.Thread(target=handle_client, args=(conn, pid), daemon=True).start()
-game_over = False
-winner = None
+    def run(self):
+        while True:
+            self.accept_players()
+            self.reset_game_state()
+            threading.Thread(target=self.ball_logic, daemon=True).start()
 
-threading.Thread(target=countdown_timer, daemon=True).start()
-threading.Thread(target=ball_logic, daemon=True).start()
+            while not self.game_over and all(self.connected.values()):
+                time.sleep(0.1)
 
-while True:
-    time.sleep(1)
+            print(f"Гравець {self.winner} переміг!")
+            time.sleep(5)
+
+            # Закриваємо старі з'єднання
+            for pid in [0, 1]:
+                try:
+                    self.clients[pid].close()
+                except:
+                    pass
+                self.clients[pid] = None
+                self.connected[pid] = False
+
+GameServer().run()
