@@ -11,7 +11,6 @@ clock = time.Clock()
 display.set_caption("Пінг-Понг")
 # ---СЕРВЕР ---
 def connect_to_server():
-    global settings
     while True:
         try:
             client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -21,7 +20,7 @@ def connect_to_server():
             my_id = int(client.recv(24).decode())
             return my_id, game_state, buffer, client
         except:
-            break
+            pass
 
 
 def receive():
