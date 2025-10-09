@@ -7,6 +7,10 @@ from threading import Thread
 # ---ПУГАМЕ НАЛАШТУВАННЯ ---
 WIDTH, HEIGHT = 800, 600
 init()
+mixer.init()
+mixer.music.load("wait.ogg")
+mixer.music.set_volume(0.25)
+mixer.music.play(-1)
 screen = display.set_mode((WIDTH, HEIGHT))
 clock = time.Clock()
 display.set_caption("Пінг-Понг")
@@ -66,7 +70,7 @@ vine1_img = pygame.image.load("wine_vine1.png").convert_alpha()
 vine1_img = pygame.transform.scale(vine1_img, (250, 250))
 
 vine2_img = pygame.image.load("wine_vine2.png").convert_alpha()
-vine2_img = pygame.transform.scale(vine2_img, (200, 300))
+vine2_img = pygame.transform.scale(vine2_img, (220, 300))
 vine22_img = vine2_img
 vine21_img = pygame.transform.scale(vine2_img, (275, 375))
 vine21_img = pygame.transform.flip(vine21_img, True, False)
@@ -77,6 +81,11 @@ vine3_img = pygame.transform.scale(vine3_img, (250, 250))
 vine3_img = pygame.transform.flip(vine3_img, True, False)
 
 # --- ЗВУКИ ---
+wall_hit = mixer.Sound("glass2.wav")
+wall_hit.set_volume(0.1)
+
+platform_hit = mixer.Sound("glass3.wav")
+platform_hit.set_volume(0.1)
 
 # --- ГРА ---
 game_over = False
@@ -156,11 +165,9 @@ while True:
 
         if game_state['sound_event']:
             if game_state['sound_event'] == 'wall_hit':
-                # звук відбиття м'ячика від стін
-                pass
-            if game_state['sound_event'] == 'platform_hit':
-                # звук відбиття м'ячика від платформи
-                pass
+                wall_hit.play()  # звук от стены
+            elif game_state['sound_event'] == 'platform_hit':
+                platform_hit.play()  # звук от платформы
 
     else:
         wating_text = font_main.render(f"Очікування гравців...", True, (255, 255, 255))
